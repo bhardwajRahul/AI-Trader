@@ -783,6 +783,180 @@ def init_database():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS signal_predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            market TEXT,
+            symbol TEXT,
+            direction TEXT,
+            target_price REAL,
+            target_probability REAL,
+            confidence REAL,
+            horizon_start_at TEXT,
+            horizon_end_at TEXT,
+            invalid_if TEXT,
+            evidence_json TEXT,
+            extracted_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS signal_quality_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            verifiability_score REAL DEFAULT 0,
+            evidence_score REAL DEFAULT 0,
+            specificity_score REAL DEFAULT 0,
+            novelty_score REAL DEFAULT 0,
+            review_score REAL DEFAULT 0,
+            overall_score REAL DEFAULT 0,
+            model_version TEXT,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_missions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_key TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            market TEXT NOT NULL,
+            symbol TEXT,
+            mission_type TEXT NOT NULL,
+            status TEXT DEFAULT 'upcoming',
+            team_size_min INTEGER DEFAULT 2,
+            team_size_max INTEGER DEFAULT 5,
+            assignment_mode TEXT DEFAULT 'random',
+            required_roles_json TEXT,
+            start_at TEXT NOT NULL,
+            submission_due_at TEXT NOT NULL,
+            settled_at TEXT,
+            rules_json TEXT,
+            experiment_key TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id INTEGER NOT NULL,
+            team_key TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            status TEXT DEFAULT 'forming',
+            formation_method TEXT DEFAULT 'manual',
+            variant_key TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (mission_id) REFERENCES team_missions(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_mission_participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'joined',
+            variant_key TEXT,
+            joined_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(mission_id, agent_id),
+            FOREIGN KEY (mission_id) REFERENCES team_missions(id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            role TEXT,
+            status TEXT DEFAULT 'active',
+            joined_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(team_id, agent_id),
+            FOREIGN KEY (team_id) REFERENCES teams(id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            signal_id INTEGER,
+            message_type TEXT NOT NULL,
+            content TEXT,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (team_id) REFERENCES teams(id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id INTEGER NOT NULL,
+            team_id INTEGER NOT NULL,
+            submitted_by_agent_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            prediction_json TEXT,
+            confidence REAL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (mission_id) REFERENCES team_missions(id),
+            FOREIGN KEY (team_id) REFERENCES teams(id),
+            FOREIGN KEY (submitted_by_agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_contributions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id INTEGER NOT NULL,
+            team_id INTEGER NOT NULL,
+            agent_id INTEGER NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id TEXT,
+            contribution_type TEXT NOT NULL,
+            contribution_score REAL DEFAULT 0,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (mission_id) REFERENCES team_missions(id),
+            FOREIGN KEY (team_id) REFERENCES teams(id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mission_id INTEGER NOT NULL,
+            team_id INTEGER NOT NULL,
+            return_pct REAL,
+            prediction_score REAL,
+            quality_score REAL,
+            consensus_gain REAL,
+            final_score REAL,
+            rank INTEGER,
+            metrics_json TEXT,
+            settled_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (mission_id) REFERENCES team_missions(id),
+            FOREIGN KEY (team_id) REFERENCES teams(id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS market_news_snapshots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             category TEXT NOT NULL,
@@ -1046,6 +1220,101 @@ def init_database():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_challenge_results_challenge_rank
         ON challenge_results(challenge_id, rank)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_signal_predictions_signal
+        ON signal_predictions(signal_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_signal_predictions_agent_created
+        ON signal_predictions(agent_id, created_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_signal_quality_scores_signal
+        ON signal_quality_scores(signal_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_signal_quality_scores_agent_created
+        ON signal_quality_scores(agent_id, created_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_missions_status_due
+        ON team_missions(status, submission_due_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_missions_key
+        ON team_missions(mission_key)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_teams_mission_status
+        ON teams(mission_id, status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_teams_key
+        ON teams(team_key)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_mission_participants_agent
+        ON team_mission_participants(agent_id, status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_mission_participants_mission
+        ON team_mission_participants(mission_id, status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_members_agent
+        ON team_members(agent_id, status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_members_team
+        ON team_members(team_id, status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_messages_team_created
+        ON team_messages(team_id, created_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_messages_signal
+        ON team_messages(signal_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_submissions_team_created
+        ON team_submissions(team_id, created_at)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_submissions_mission
+        ON team_submissions(mission_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_contributions_mission_agent
+        ON team_contributions(mission_id, agent_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_contributions_team
+        ON team_contributions(team_id, contribution_type)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_team_results_mission_rank
+        ON team_results(mission_id, rank)
     """)
 
     cursor.execute("""

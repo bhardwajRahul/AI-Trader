@@ -36,6 +36,7 @@ from routes_shared import (
     validate_executed_at,
 )
 from services import _add_agent_points, _get_agent_by_token, _reserve_signal_id, _update_position_from_signal
+from team_missions import TeamMissionError, record_team_message_from_signal, record_team_reply_from_parent_signal
 from utils import _extract_token
 
 
@@ -471,8 +472,18 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     content=data.content,
                     prediction_json=None,
                 )
+            if data.mission_key or data.team_key:
+                record_team_message_from_signal(
+                    cursor,
+                    mission_key=data.mission_key,
+                    team_key=data.team_key,
+                    agent_id=agent_id,
+                    signal_id=signal_id,
+                    message_type='strategy',
+                    content=data.content,
+                )
             conn.commit()
-        except ChallengeError as exc:
+        except (ChallengeError, TeamMissionError) as exc:
             conn.rollback()
             conn.close()
             raise HTTPException(status_code=400, detail=str(exc))
@@ -547,8 +558,18 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     content=data.content,
                     prediction_json=None,
                 )
+            if data.mission_key or data.team_key:
+                record_team_message_from_signal(
+                    cursor,
+                    mission_key=data.mission_key,
+                    team_key=data.team_key,
+                    agent_id=agent_id,
+                    signal_id=signal_id,
+                    message_type='discussion',
+                    content=data.content,
+                )
             conn.commit()
-        except ChallengeError as exc:
+        except (ChallengeError, TeamMissionError) as exc:
             conn.rollback()
             conn.close()
             raise HTTPException(status_code=400, detail=str(exc))
@@ -830,6 +851,33 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         cursor.execute(query, params)
         rows = cursor.fetchall()
+        signal_ids = [row['signal_id'] for row in rows]
+        team_badges_by_signal: dict[int, list[dict[str, Any]]] = {}
+        if signal_ids:
+            placeholders = ','.join('?' for _ in signal_ids)
+            cursor.execute(
+                f"""
+                SELECT
+                    tmsg.signal_id,
+                    tm.mission_key,
+                    tm.title AS mission_title,
+                    t.team_key,
+                    t.name AS team_name
+                FROM team_messages tmsg
+                JOIN teams t ON t.id = tmsg.team_id
+                JOIN team_missions tm ON tm.id = t.mission_id
+                WHERE tmsg.signal_id IN ({placeholders})
+                ORDER BY tmsg.created_at DESC, tmsg.id DESC
+                """,
+                signal_ids,
+            )
+            for badge_row in cursor.fetchall():
+                team_badges_by_signal.setdefault(badge_row['signal_id'], []).append({
+                    'mission_key': badge_row['mission_key'],
+                    'mission_title': badge_row['mission_title'],
+                    'team_key': badge_row['team_key'],
+                    'team_name': badge_row['team_name'],
+                })
         followed_author_ids = set()
         if viewer:
             cursor.execute(
@@ -854,6 +902,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 signal_dict['participant_count'] = 1
             if signal_dict.get('market') == 'polymarket':
                 decorate_polymarket_item(signal_dict, fetch_remote=False)
+            signal_dict['team_badges'] = team_badges_by_signal.get(signal_dict.get('signal_id'), [])
             signal_dict['is_following_author'] = signal_dict['agent_id'] in followed_author_ids
             signals.append(signal_dict)
 
@@ -1074,6 +1123,17 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             """,
             (data.signal_id, agent_id, data.content),
         )
+        reply_id = cursor.lastrowid
+        try:
+            record_team_reply_from_parent_signal(
+                cursor,
+                parent_signal_id=data.signal_id,
+                reply_id=reply_id,
+                agent_id=agent_id,
+                content=data.content,
+            )
+        except TeamMissionError:
+            pass
         conn.commit()
         conn.close()
 
